@@ -46,7 +46,7 @@ def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
         for source_file in sorted(path for path in source_dataset.rglob("*") if path.is_file()):
             relative_path = source_file.relative_to(source_root)
             destination_file = lake_root / relative_path
-
+                        
             if is_up_to_date(source_file, destination_file):
                 skipped += 1
                 continue
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-
+    
     try:
         copied, skipped = copy_to_lake(
             args.source.resolve(), args.destination.resolve()
