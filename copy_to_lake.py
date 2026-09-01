@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import shutil
+from datetime import date
 from pathlib import Path
 
 
@@ -16,27 +17,6 @@ DATASETS = (
     "sejours",
 )
 SENSITIVE_PATIENT_COLUMNS = {"nir", "nom", "prenom"}
-
-
-def is_up_to_date(source: Path, destination: Path) -> bool:
-    if not destination.is_file():
-        return False
-
-    source_stat = source.stat()
-    destination_stat = destination.stat()
-    return (
-        source_stat.st_size == destination_stat.st_size
-        and source_stat.st_mtime_ns == destination_stat.st_mtime_ns
-    )
-
-
-def is_sanitized_patient_file(destination: Path) -> bool:
-    if not destination.is_file():
-        return False
-
-    with destination.open("r", encoding="utf-8-sig", newline="") as file:
-        header = next(csv.reader(file), [])
-    return SENSITIVE_PATIENT_COLUMNS.isdisjoint(header)
 
 
 def copy_sanitized_patients(source: Path, destination: Path) -> None:
@@ -74,7 +54,7 @@ def copy_sanitized_patients(source: Path, destination: Path) -> None:
 
 def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
     copied = 0
-    skipped = 0
+    skipped_dates = 0
 
     if not source_root.is_dir():
         raise FileNotFoundError(f"Source directory not found: {source_root}")
@@ -83,36 +63,42 @@ def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
 
     for dataset in DATASETS:
         source_dataset = source_root / dataset
+
         if not source_dataset.is_dir():
             print(f"WARNING: missing dataset: {source_dataset}")
             continue
 
-        for source_file in sorted(path for path in source_dataset.rglob("*") if path.is_file()):
-            relative_path = source_file.relative_to(source_root)
-            destination_file = lake_root / relative_path
-                        
-            is_patient_csv = dataset == "patients" and source_file.suffix.lower() == ".csv"
-            destination_is_current = is_up_to_date(source_file, destination_file)
-            if is_patient_csv:
-                destination_is_current = (
-                    is_sanitized_patient_file(destination_file)
-                    and source_file.stat().st_mtime_ns
-                    == destination_file.stat().st_mtime_ns
-                )
-
-            if destination_is_current:
-                skipped += 1
+        source_dates = sorted(path for path in source_dataset.iterdir() if path.is_dir())
+        for source_date in source_dates:
+            try:
+                partition_date = date.fromisoformat(source_date.name)
+            except ValueError:
+                print(f"WARNING: invalid date directory: {source_date}")
                 continue
 
-            destination_file.parent.mkdir(parents=True, exist_ok=True)
-            if is_patient_csv:
-                copy_sanitized_patients(source_file, destination_file)
-            else:
-                shutil.copy2(source_file, destination_file)
-            copied += 1
-            print(f"COPIED: {relative_path}")
+            destination_date = lake_root / dataset / partition_date.isoformat()
+            if destination_date.is_dir():
+                skipped_dates += 1
+                continue
 
-    return copied, skipped
+            destination_date.mkdir(parents=True)
+            for source_file in source_date.rglob("*"):
+                if not source_file.is_file():
+                    continue
+
+                relative_path = source_file.relative_to(source_date)
+                destination_file = destination_date / relative_path
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+
+                if dataset == "patients":
+                    copy_sanitized_patients(source_file, destination_file)
+                else:
+                    shutil.copy2(source_file, destination_file)
+
+                copied += 1
+                print(f"COPIED: {dataset}/{source_date.name}/{relative_path}")
+
+    return copied, skipped_dates
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,16 +123,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    
+
     try:
-        copied, skipped = copy_to_lake(
+        copied, skipped_dates = copy_to_lake(
             args.source.resolve(), args.destination.resolve()
         )
     except (OSError, ValueError) as error:
         print(f"ERROR: {error}")
         return 1
 
-    print(f"Completed: {copied} copied, {skipped} already up to date.")
+    print(f"Completed: {copied} files copied, {skipped_dates} dates skipped.")
     return 0
 
 
