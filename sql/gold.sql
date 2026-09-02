@@ -39,3 +39,24 @@ WHERE sejour.discharge_ts IS NOT NULL
 GROUP BY
     sejour.service_code,
     service.service_name;
+
+CREATE TABLE IF NOT EXISTS gold.activite_urgences_par_jour (
+    activity_date Date,
+    emergency_visits UInt64,
+    calculated_at DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY activity_date;
+
+TRUNCATE TABLE gold.activite_urgences_par_jour;
+
+INSERT INTO gold.activite_urgences_par_jour (
+    activity_date,
+    emergency_visits
+)
+SELECT
+    toDate(admission_ts) AS activity_date,
+    count() AS emergency_visits
+FROM silver.fact_sejour
+WHERE admission_mode = 'urgence'
+GROUP BY activity_date;
