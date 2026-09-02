@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS silver.fact_sejour (
     patient_id String,
     service_code LowCardinality(String),
     admission_ts DateTime,
-    discharge_ts Nullable(DateTime)
+    discharge_ts Nullable(DateTime),
+    admission_mode LowCardinality(String),
+    discharge_mode LowCardinality(Nullable(String))
 )
 ENGINE = MergeTree
 ORDER BY stay_id;
@@ -85,21 +87,27 @@ INSERT INTO silver.fact_sejour (
     patient_id,
     service_code,
     admission_ts,
-    discharge_ts
+    discharge_ts,
+    admission_mode,
+    discharge_mode
 )
 SELECT
     stay_id,
     patient_id,
     service_code,
     admission_ts,
-    discharge_ts
+    discharge_ts,
+    admission_mode,
+    discharge_mode
 FROM (
     SELECT
         stay_id,
         argMax(patient_id, (source_date, ingested_at)) AS patient_id,
         argMax(service_code, (source_date, ingested_at)) AS service_code,
         argMax(admission_ts, (source_date, ingested_at)) AS admission_ts,
-        argMax(discharge_ts, (source_date, ingested_at)) AS discharge_ts
+        argMax(discharge_ts, (source_date, ingested_at)) AS discharge_ts,
+        argMax(admission_mode, (source_date, ingested_at)) AS admission_mode,
+        argMax(discharge_mode, (source_date, ingested_at)) AS discharge_mode
     FROM bronze.sejour
     GROUP BY stay_id
 )
