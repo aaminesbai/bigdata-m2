@@ -137,3 +137,44 @@ CROSS JOIN observation_period AS observation
 GROUP BY
     observation.start_date,
     observation.end_date;
+
+CREATE TABLE IF NOT EXISTS gold.alertes_constantes_par_jour (
+    activity_date Date,
+    total_readings UInt64,
+    alert_readings UInt64,
+    heart_rate_alerts UInt64,
+    spo2_alerts UInt64,
+    temperature_alerts UInt64,
+    alert_rate_percent Float64,
+    calculated_at DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY activity_date;
+
+TRUNCATE TABLE gold.alertes_constantes_par_jour;
+
+INSERT INTO gold.alertes_constantes_par_jour (
+    activity_date,
+    total_readings,
+    alert_readings,
+    heart_rate_alerts,
+    spo2_alerts,
+    temperature_alerts,
+    alert_rate_percent
+)
+SELECT
+    toDate(ts) AS activity_date,
+    count() AS total_readings,
+    countIf(
+        heart_rate < 50
+        OR heart_rate > 120
+        OR spo2 < 92
+        OR temp_c < 36
+        OR temp_c > 38.5
+    ) AS alert_readings,
+    countIf(heart_rate < 50 OR heart_rate > 120) AS heart_rate_alerts,
+    countIf(spo2 < 92) AS spo2_alerts,
+    countIf(temp_c < 36 OR temp_c > 38.5) AS temperature_alerts,
+    round(100.0 * alert_readings / total_readings, 2) AS alert_rate_percent
+FROM silver.fact_monitoring
+GROUP BY activity_date;
