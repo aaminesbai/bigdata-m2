@@ -31,7 +31,7 @@ SELECT
     toDate(extract(_path, 'patients/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/patients/*/patients.csv',
+    'patients/*/patients.csv',
     'CSVWithNames',
     'patient_id String, birth_date Date, sex String, region_code String'
 )
@@ -90,7 +90,7 @@ SELECT
     toDate(extract(_path, 'sejours/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/sejours/*/sejours.csv',
+    'sejours/*/sejours.csv',
     'CSVWithNames',
     'stay_id String, patient_id String, service_code String, admission_ts DateTime, discharge_ts Nullable(DateTime), admission_mode String, discharge_mode Nullable(String)'
 )
@@ -127,7 +127,7 @@ SELECT
     toDate(extract(_path, 'diagnostics/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/diagnostics/*/diagnostics.json',
+    'diagnostics/*/diagnostics.json',
     'JSONEachRow',
     'stay_id String, diagnostics Array(Tuple(code_cim10 String, type String))'
 )
@@ -171,7 +171,7 @@ SELECT
     toDate(extract(_path, 'monitoring/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/monitoring/*/monitoring.parquet',
+    'monitoring/*/monitoring.parquet',
     'Parquet'
 )
 WHERE _path NOT IN (
@@ -204,7 +204,7 @@ SELECT
     toDate(extract(_path, 'referentiels/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/referentiels/*/services.csv',
+    'referentiels/*/services.csv',
     'CSVWithNames',
     'service_code String, service_label String'
 )
@@ -238,7 +238,7 @@ SELECT
     toDate(extract(_path, 'referentiels/([0-9]{4}-[0-9]{2}-[0-9]{2})/')),
     _path
 FROM file(
-    'lake/referentiels/*/cim10.csv',
+    'referentiels/*/cim10.csv',
     'CSVWithNames',
     'code_cim10 String, libelle String'
 )
