@@ -102,7 +102,7 @@ def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
 
 
 def parse_args() -> argparse.Namespace:
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(
         description="Copy source-filestorage datasets to the Lake while preserving dates."
     )

@@ -4,7 +4,21 @@ Ce projet collecte les fichiers quotidiens du CHU dans un Lake local, puis les
 charge dans des tables Bronze ClickHouse.
 
 ```text
-source-filestorage/ -> lake/ -> ClickHouse Bronze -> ClickHouse Silver
+source-filestorage/ -> lake/ -> ClickHouse Bronze -> ClickHouse Silver -> ClickHouse Gold
+```
+
+## Arborescence
+
+```text
+sql/
+|-- bronze.sql
+|-- silver.sql
+`-- gold.sql
+
+scripts/
+|-- copy_to_lake.py
+|-- insert_to_bronze.py
+`-- insert_to_silver.py
 ```
 
 Lors de la copie, les colonnes `nom`, `prenom` et `nir` sont supprimees des
@@ -39,7 +53,7 @@ Il est aussi possible d'activer l'environnement :
 ### 2. Alimenter le Lake
 
 ```powershell
-.\.venv\Scripts\python.exe .\copy_to_lake.py
+.\.venv\Scripts\python.exe .\scripts\copy_to_lake.py
 ```
 
 Le script reproduit les partitions quotidiennes :
@@ -87,22 +101,30 @@ docker start clickhouse-bigdata
 ### 4. Creer et alimenter Bronze
 
 ```powershell
-.\.venv\Scripts\python.exe .\insert_to_bronze.py
+.\.venv\Scripts\python.exe .\scripts\insert_to_bronze.py
 ```
 
-Le script execute `bronze.sql`, cree les tables si necessaire, charge uniquement
+Le script execute `sql/bronze.sql`, cree les tables si necessaire, charge uniquement
 les fichiers dont le chemin n'est pas encore enregistre, puis affiche le nombre
 de lignes par table.
 
 ### 5. Creer et alimenter Silver
 
 ```powershell
-.\.venv\Scripts\python.exe .\insert_to_silver.py
+.\.venv\Scripts\python.exe .\scripts\insert_to_silver.py
 ```
 
-Le script execute `silver.sql`, deduplique les patients et les sejours, ecarte
+Le script execute `sql/silver.sql`, deduplique les patients et les sejours, ecarte
 les sejours dont la sortie precede l'admission, puis conserve uniquement les
 releves monitoring dans les plages physiologiques attendues.
+
+### 6. Creer et alimenter Gold
+
+```powershell
+Get-Content .\sql\gold.sql -Raw | docker exec -i clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery
+```
+
+Le SQL recree les indicateurs Gold a partir des tables Silver nettoyees.
 
 L'interface SQL ClickHouse est accessible sur :
 
@@ -122,14 +144,16 @@ Mot de passe : clickhouse
 Apres le depot d'une nouvelle date dans `source-filestorage/` :
 
 ```powershell
-.\.venv\Scripts\python.exe .\copy_to_lake.py
-.\.venv\Scripts\python.exe .\insert_to_bronze.py
-.\.venv\Scripts\python.exe .\insert_to_silver.py
+.\.venv\Scripts\python.exe .\scripts\copy_to_lake.py
+.\.venv\Scripts\python.exe .\scripts\insert_to_bronze.py
+.\.venv\Scripts\python.exe .\scripts\insert_to_silver.py
+Get-Content .\sql\gold.sql -Raw | docker exec -i clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery
 ```
 
 La premiere commande copie uniquement les nouvelles partitions de dates. La
 seconde ignore les fichiers deja charges dans Bronze grace a leur `source_file`.
-La troisieme insere uniquement les nouvelles cles valides dans Silver.
+La troisieme insere uniquement les nouvelles cles valides dans Silver. La
+derniere recalcule les indicateurs Gold.
 
 ## Verification
 
@@ -156,16 +180,16 @@ docker exec clickhouse-bigdata sh -c "find /var/lib/clickhouse/user_files -maxde
 Afficher l'aide :
 
 ```powershell
-.\.venv\Scripts\python.exe .\copy_to_lake.py --help
-.\.venv\Scripts\python.exe .\insert_to_bronze.py --help
-.\.venv\Scripts\python.exe .\insert_to_silver.py --help
+.\.venv\Scripts\python.exe .\scripts\copy_to_lake.py --help
+.\.venv\Scripts\python.exe .\scripts\insert_to_bronze.py --help
+.\.venv\Scripts\python.exe .\scripts\insert_to_silver.py --help
 ```
 
 Utiliser des chemins personnalises :
 
 ```powershell
-.\.venv\Scripts\python.exe .\copy_to_lake.py --source C:\chemin\source --destination C:\chemin\lake
-.\.venv\Scripts\python.exe .\insert_to_bronze.py --lake C:\chemin\lake --sql .\bronze.sql
+.\.venv\Scripts\python.exe .\scripts\copy_to_lake.py --source C:\chemin\source --destination C:\chemin\lake
+.\.venv\Scripts\python.exe .\scripts\insert_to_bronze.py --lake C:\chemin\lake --sql .\sql\bronze.sql
 ```
 
 Le chemin fourni a `--lake` doit correspondre au dossier monte dans
@@ -175,13 +199,13 @@ Le chemin fourni a `--lake` doit correspondre au dossier monte dans
 
 Si une copie a ete interrompue, une partition de date peut exister sans contenir
 tous ses fichiers. Supprimer uniquement cette partition incomplete dans le Lake,
-puis relancer `copy_to_lake.py`.
+puis relancer `scripts/copy_to_lake.py`.
 
 Exemple :
 
 ```powershell
 Remove-Item -Recurse -Force .\lake\monitoring\2026-08-29
-.\.venv\Scripts\python.exe .\copy_to_lake.py
+.\.venv\Scripts\python.exe .\scripts\copy_to_lake.py
 ```
 
 Ne jamais supprimer `source-filestorage/`, qui constitue la source fournie par

@@ -1,4 +1,4 @@
-"""Create and populate the ClickHouse Silver layer from silver.sql."""
+"""Create and populate the ClickHouse Bronze layer from bronze.sql."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ except ImportError as error:
 
 
 TABLES = (
-    "dim_cim10",
-    "dim_patient",
-    "dim_service",
-    "fact_diag",
-    "fact_sejour",
-    "fact_monitoring",
+    "patient",
+    "sejour",
+    "diagnostic",
+    "monitoring",
+    "service",
+    "cim10",
 )
 
 
@@ -38,15 +38,21 @@ def environment_bool(name: str, default: bool = False) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(
-        description="Create and populate the ClickHouse Silver tables."
+        description="Create and populate the ClickHouse Bronze tables."
     )
     parser.add_argument(
         "--sql",
         type=Path,
-        default=project_root / "silver.sql",
-        help="SQL file containing the Silver DDL and INSERT statements",
+        default=project_root / "sql" / "bronze.sql",
+        help="SQL file containing the Bronze DDL and INSERT INTO statements",
+    )
+    parser.add_argument(
+        "--lake",
+        type=Path,
+        default=project_root / "lake",
+        help="local Lake directory mounted in ClickHouse user_files",
     )
     parser.add_argument(
         "--host",
@@ -73,6 +79,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_inputs(sql_path: Path, lake_path: Path) -> None:
+    if not sql_path.is_file():
+        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+    if not lake_path.is_dir():
+        raise FileNotFoundError(
+            f"Lake directory not found: {lake_path}. "
+            "Run scripts/copy_to_lake.py first."
+        )
+
+
 def create_clickhouse_client(args: argparse.Namespace):
     client = clickhouse_connect.get_client(
         host=args.host,
@@ -95,14 +111,9 @@ def statement_label(statement: str) -> str:
 
 
 def execute_sql_file(client, sql_path: Path) -> int:
-    if not sql_path.is_file():
-        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+    sql = sql_path.read_text(encoding="utf-8")
+    statements = [statement for statement in sqlparse.split(sql) if statement.strip()]
 
-    statements = [
-        statement
-        for statement in sqlparse.split(sql_path.read_text(encoding="utf-8"))
-        if statement.strip()
-    ]
     if not statements:
         raise ValueError(f"No SQL statement found in {sql_path}")
 
@@ -114,27 +125,32 @@ def execute_sql_file(client, sql_path: Path) -> int:
     return len(statements)
 
 
-def print_silver_counts(client) -> None:
+def print_bronze_counts(client) -> None:
     selects = " UNION ALL ".join(
         f"SELECT '{table}' AS table_name, count() AS row_count "
-        f"FROM silver.{table}"
+        f"FROM bronze.{table}"
         for table in TABLES
     )
-    result = client.query(f"SELECT * FROM ({selects}) ORDER BY table_name")
+    result = client.query(
+        f"SELECT * FROM ({selects}) ORDER BY table_name"
+    )
 
-    print("Silver row counts:")
+    print("Bronze row counts:")
     for table_name, row_count in result.result_rows:
         print(f"  {table_name}: {row_count}")
 
 
 def main() -> int:
     args = parse_args()
+    sql_path = args.sql.resolve()
+    lake_path = args.lake.resolve()
     client = None
 
     try:
+        validate_inputs(sql_path, lake_path)
         client = create_clickhouse_client(args)
-        statement_count = execute_sql_file(client, args.sql.resolve())
-        print_silver_counts(client)
+        statement_count = execute_sql_file(client, sql_path)
+        print_bronze_counts(client)
     except Exception as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
