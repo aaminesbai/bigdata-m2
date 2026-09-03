@@ -21,7 +21,15 @@ scripts/
 |-- copy_to_lake.py
 |-- insert_to_bronze.py
 |-- insert_to_silver.py
-`-- insert_to_gold.py
+|-- insert_to_gold.py
+|-- run_pipeline.py
+`-- register_pipeline_task.ps1
+
+docs/
+`-- partie-2-automatisation.md
+
+tests/
+`-- test_automation.py
 ```
 
 Lors de la copie, les colonnes `nom`, `prenom` et `nir` sont supprimees des
@@ -78,8 +86,8 @@ source-filestorage/monitoring/2026-08-28/monitoring.parquet
 lake/monitoring/2026-08-28/monitoring.parquet
 ```
 
-Une partition `lake/<dataset>/<AAAA-MM-JJ>/` deja presente est ignoree. Une
-nouvelle date est copiee integralement.
+Une partition munie du marqueur `_SUCCESS` est ignoree. Une partition portant
+`_INCOMPLETE` est reconstruite avant la reprise du pipeline.
 
 ### 4. Demarrer ClickHouse
 
@@ -142,16 +150,23 @@ Mot de passe : clickhouse
 Apres le depot d'une nouvelle date dans `source-filestorage/` :
 
 ```console
-python scripts/copy_to_lake.py
-python scripts/insert_to_bronze.py
-python scripts/insert_to_silver.py
-python scripts/insert_to_gold.py
+python scripts/run_pipeline.py
 ```
 
-La premiere commande copie uniquement les nouvelles partitions de dates. La
-seconde ignore les fichiers deja charges dans Bronze grace a leur `source_file`.
-La troisieme insere uniquement les nouvelles cles valides dans Silver. La
-derniere recalcule les indicateurs Gold.
+L'orchestrateur execute dans l'ordre la collecte, Bronze, Silver et Gold. Il
+protege les executions concurrentes, journalise chaque etape et conserve une
+trace dans les tables `audit.pipeline_runs` et `audit.pipeline_stages`.
+
+Pour installer une execution quotidienne a 02:00 dans le Planificateur de
+taches Windows :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/register_pipeline_task.ps1
+```
+
+La documentation complete de la Partie 2, avec les choix d'architecture et les
+procedures de maintenance, est disponible dans
+[`docs/partie-2-automatisation.md`](docs/partie-2-automatisation.md).
 
 ## Verification
 
@@ -182,6 +197,7 @@ python scripts/copy_to_lake.py --help
 python scripts/insert_to_bronze.py --help
 python scripts/insert_to_silver.py --help
 python scripts/insert_to_gold.py --help
+python scripts/run_pipeline.py --help
 ```
 
 Utiliser des chemins personnalises :
@@ -196,19 +212,24 @@ Le chemin fourni a `--lake` doit correspondre au dossier monte dans
 
 ## Reprise sur incident
 
-Si une copie a ete interrompue, une partition de date peut exister sans contenir
-tous ses fichiers. Supprimer uniquement cette partition incomplete dans le Lake,
-puis relancer `scripts/copy_to_lake.py`.
+La collecte marque une partition `_SUCCESS` uniquement lorsque tous ses fichiers
+ont ete copies. Apres une erreur de collecte, relancer le pipeline complet :
 
-Exemple :
-
-```powershell
-Remove-Item -Recurse -Force .\lake\monitoring\2026-08-29
-python scripts/copy_to_lake.py
+```console
+python scripts/run_pipeline.py
 ```
 
-Ne jamais supprimer `source-filestorage/`, qui constitue la source fournie par
-le CHU.
+Pour reprendre directement une transformation deja alimentee en entree :
+
+```console
+python scripts/run_pipeline.py --start-at bronze
+python scripts/run_pipeline.py --start-at silver
+python scripts/run_pipeline.py --start-at gold
+```
+
+Consulter `logs/pipeline.log` et les tables `audit` avant de choisir l'etape de
+reprise. Ne jamais supprimer `source-filestorage/`, qui constitue la source
+fournie par le CHU.
 
 ## Depannage
 

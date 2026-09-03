@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import shutil
 from datetime import date
 from pathlib import Path
@@ -17,6 +18,9 @@ DATASETS = (
     "sejours",
 )
 SENSITIVE_PATIENT_COLUMNS = {"nir", "nom", "prenom"}
+INCOMPLETE_MARKER = "_INCOMPLETE"
+SUCCESS_MARKER = "_SUCCESS"
+LOGGER = logging.getLogger(__name__)
 
 
 def copy_sanitized_patients(source: Path, destination: Path) -> None:
@@ -65,7 +69,7 @@ def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
         source_dataset = source_root / dataset
 
         if not source_dataset.is_dir():
-            print(f"WARNING: missing dataset: {source_dataset}")
+            LOGGER.warning("Missing dataset: %s", source_dataset)
             continue
 
         source_dates = sorted(path for path in source_dataset.iterdir() if path.is_dir())
@@ -73,30 +77,77 @@ def copy_to_lake(source_root: Path, lake_root: Path) -> tuple[int, int]:
             try:
                 partition_date = date.fromisoformat(source_date.name)
             except ValueError:
-                print(f"WARNING: invalid date directory: {source_date}")
+                LOGGER.warning("Invalid date directory: %s", source_date)
                 continue
 
-            destination_date = lake_root / dataset / partition_date.isoformat()
+            destination_dataset = lake_root / dataset
+            destination_date = destination_dataset / partition_date.isoformat()
             if destination_date.is_dir():
-                skipped_dates += 1
-                continue
+                success_marker = destination_date / SUCCESS_MARKER
+                incomplete_marker = destination_date / INCOMPLETE_MARKER
 
-            destination_date.mkdir(parents=True)
-            for source_file in source_date.rglob("*"):
-                if not source_file.is_file():
+                if success_marker.is_file():
+                    skipped_dates += 1
                     continue
 
-                relative_path = source_file.relative_to(source_date)
-                destination_file = destination_date / relative_path
-                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                if not incomplete_marker.exists():
+                    # Partitions created before markers were introduced are complete.
+                    success_marker.touch()
+                    skipped_dates += 1
+                    LOGGER.info(
+                        "Marked legacy partition as complete: %s/%s",
+                        dataset,
+                        source_date.name,
+                    )
+                    continue
 
-                if dataset == "patients":
-                    copy_sanitized_patients(source_file, destination_file)
-                else:
-                    shutil.copy2(source_file, destination_file)
+                LOGGER.warning(
+                    "Removing incomplete partition before retry: %s/%s",
+                    dataset,
+                    source_date.name,
+                )
+                shutil.rmtree(destination_date)
 
-                copied += 1
-                print(f"COPIED: {dataset}/{source_date.name}/{relative_path}")
+            source_files = sorted(path for path in source_date.rglob("*") if path.is_file())
+            if not source_files:
+                LOGGER.warning("Empty source partition: %s", source_date)
+                continue
+
+            destination_dataset.mkdir(parents=True, exist_ok=True)
+            destination_date.mkdir()
+            incomplete_marker = destination_date / INCOMPLETE_MARKER
+            incomplete_marker.touch()
+
+            try:
+                for source_file in source_files:
+                    relative_path = source_file.relative_to(source_date)
+                    destination_file = destination_date / relative_path
+                    destination_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    if dataset == "patients":
+                        copy_sanitized_patients(source_file, destination_file)
+                    else:
+                        shutil.copy2(source_file, destination_file)
+
+                incomplete_marker.unlink()
+                (destination_date / SUCCESS_MARKER).touch()
+            except Exception:
+                try:
+                    shutil.rmtree(destination_date)
+                except OSError:
+                    LOGGER.exception(
+                        "Could not remove incomplete partition: %s",
+                        destination_date,
+                    )
+                raise
+
+            copied += len(source_files)
+            LOGGER.info(
+                "Copied partition %s/%s (%d file(s))",
+                dataset,
+                source_date.name,
+                len(source_files),
+            )
 
     return copied, skipped_dates
 
@@ -123,16 +174,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     try:
         copied, skipped_dates = copy_to_lake(
             args.source.resolve(), args.destination.resolve()
         )
     except (OSError, ValueError) as error:
-        print(f"ERROR: {error}")
+        LOGGER.error("%s", error)
         return 1
 
-    print(f"Completed: {copied} files copied, {skipped_dates} dates skipped.")
+    LOGGER.info(
+        "Completed: %d files copied, %d dates skipped.",
+        copied,
+        skipped_dates,
+    )
     return 0
 
 
