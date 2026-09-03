@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS gold;
 
+-- DMS par service --------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS gold.dms_par_service (
     service_code LowCardinality(String),
     service_name String,
@@ -40,6 +42,8 @@ GROUP BY
     sejour.service_code,
     service.service_name;
 
+-- Activite des urgences ---------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS gold.activite_urgences_par_jour (
     activity_date Date,
     emergency_visits UInt64,
@@ -60,6 +64,8 @@ SELECT
 FROM silver.fact_sejour
 WHERE admission_mode = 'urgence'
 GROUP BY activity_date;
+
+-- Readmissions a 30 jours ---------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS gold.taux_readmission_30_jours (
     metric_scope LowCardinality(String),
@@ -138,6 +144,8 @@ GROUP BY
     observation.start_date,
     observation.end_date;
 
+-- Alertes des constantes ---------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS gold.alertes_constantes_par_jour (
     activity_date Date,
     total_readings UInt64,
@@ -179,6 +187,8 @@ SELECT
 FROM silver.fact_monitoring
 GROUP BY activity_date;
 
+-- Prevalence par pathologie ------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS gold.prevalence_par_pathologie (
     code_cim10 LowCardinality(String),
     diagnostic_name String,
@@ -211,6 +221,8 @@ INNER JOIN silver.fact_sejour AS sejour
     ON diagnostic.stay_id = sejour.stay_id
 GROUP BY diagnostic.code_cim10
 HAVING cohort_size >= 5;
+
+-- Distribution des cohortes par age et sexe --------------------------------------
 
 CREATE TABLE IF NOT EXISTS gold.distribution_cohorte_age_sexe (
     code_cim10 LowCardinality(String),

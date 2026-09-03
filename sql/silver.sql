@@ -1,5 +1,7 @@
 CREATE DATABASE IF NOT EXISTS silver;
 
+-- Patients -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS silver.dim_patient (
     patient_id String,
     birth_date Date,
@@ -28,6 +30,8 @@ HAVING patient_id NOT IN (
     FROM silver.dim_patient
 );
 
+-- Services -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS silver.dim_service (
     service_code LowCardinality(String),
     service_name String
@@ -49,6 +53,8 @@ HAVING service_code NOT IN (
     FROM silver.dim_service
 );
 
+-- Referentiel CIM-10 ---------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS silver.dim_cim10 (
     code_cim10 LowCardinality(String),
     libelle String
@@ -69,6 +75,8 @@ HAVING code_cim10 NOT IN (
     SELECT code_cim10
     FROM silver.dim_cim10
 );
+
+-- Sejours --------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS silver.fact_sejour (
     stay_id String,
@@ -125,6 +133,8 @@ WHERE (discharge_ts IS NULL OR discharge_ts >= admission_ts)
       FROM silver.fact_sejour
   );
 
+-- Diagnostics ----------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS silver.fact_diag (
     stay_id String,
     code_cim10 LowCardinality(String),
@@ -168,6 +178,8 @@ WHERE diagnostic.stay_id IN (
           SELECT stay_id, code_cim10, diagnostic_type
           FROM silver.fact_diag
       );
+
+-- Monitoring -----------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS silver.fact_monitoring (
     stay_id String,
