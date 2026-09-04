@@ -158,41 +158,34 @@ Mot de passe : clickhouse
 
 ### 8. Creer et configurer Metabase
 
-La procedure suivante cree le reseau Docker s'il n'existe pas, y connecte
-ClickHouse, cree les comptes SQL en lecture seule, demarre Metabase et
-provisionne les comptes, collections, questions, dashboards et permissions.
-Elle peut etre relancee sans recreer les objets deja presents.
+Lancez les commandes Docker suivantes dans l'ordre (Linux, macOS et
+Windows sans syntaxe specifique a PowerShell) :
 
-```powershell
-docker network inspect bigdata-network *> $null
-if ($LASTEXITCODE -ne 0) { docker network create bigdata-network }
-docker network connect bigdata-network clickhouse-bigdata 2>$null
-Get-Content -Raw sql/metabase_access.sql | docker exec -i clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery
+```console
+docker network create bigdata-network
+docker network connect bigdata-network clickhouse-bigdata
 docker compose -f docker-compose.metabase.yml up -d
+```
+
+Si le reseau ou la connexion existe deja, Docker affiche une erreur
+`already exists` ou `already connected` : ignorez-la et continuez.
+
+L'instance Metabase est ensuite accessible sur `http://localhost:3000`. Les
+identifiants sont documentes dans `METABASE-CREDENTIALS.txt`.
+
+Lancez ensuite le provisionnement :
+
+```console
+docker cp sql/metabase_access.sql clickhouse-bigdata:/tmp/metabase_access.sql
+docker exec clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery --queries-file /tmp/metabase_access.sql
 python scripts/setup_metabase.py
 python scripts/verify_metabase.py
 ```
 
-Le fichier `docker-compose.metabase.yml` fixe la version de Metabase, utilise
-la locale francaise, desactive la telemetrie anonyme et stocke sa base
-applicative dans le volume persistant `metabase-data`. Le script attend que
-l'API soit disponible avant de lancer le provisionnement.
-
-Le provisionnement cree :
-
-- le dashboard `Pilotage hospitalier` avec la DMS, les urgences, les
-  readmissions et les alertes de constantes ;
-- le dashboard `Recherche clinique` avec la prevalence et la description des
-  cohortes par age et sexe ;
-- les groupes, collections et comptes de demonstration separes ;
-- deux connexions ClickHouse dont les comptes techniques ne peuvent lire que
-  les tables Gold correspondant a leur usage.
-
-Les cohortes et cellules de moins de 5 patients sont exclues par `gold.sql`.
-Le groupe Pilotage ne peut pas ouvrir la collection Recherche, et inversement.
-
-L'interface est ensuite disponible sur `http://localhost:3000`. Les comptes de
-demonstration sont documentes dans `METABASE-CREDENTIALS.txt`.
+Le provisionnement cree les comptes, collections, questions et dashboards
+(`Pilotage hospitalier` et `Recherche clinique`) avec le cloisonnement
+necessaire. Le volume `metabase-data` persiste la configuration entre les
+redemarrages.
 
 ### 9. Recreer le conteneur Metabase
 
@@ -207,7 +200,7 @@ volume persistant et toute la configuration Metabase.
 Pour repartir volontairement d'une instance vierge, supprimer le conteneur et
 le volume, puis reprendre l'etape 8 :
 
-```powershell
+```console
 docker compose -f docker-compose.metabase.yml down -v
 ```
 
