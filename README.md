@@ -26,8 +26,9 @@ scripts/
 `-- register_pipeline_task.ps1
 
 docs/
-|-- partie-1-interface-analyse.md
-`-- partie-2-automatisation.md
+`-- RAPPORT.md
+
+RAPPORT.pdf
 
 tests/
 `-- test_automation.py
@@ -155,35 +156,27 @@ Utilisateur : admin
 Mot de passe : clickhouse
 ```
 
-### 8. Demarrer Metabase
+### 8. Creer et configurer Metabase
 
-```console
-docker network create bigdata-network
-docker network connect bigdata-network clickhouse-bigdata
-docker compose -f docker-compose.metabase.yml up -d
-```
-
-Si le reseau existe deja, l'erreur de la premiere commande peut etre ignoree.
-Le volume nomme `metabase-data` conserve les comptes, droits, questions et
-dashboards lorsque le conteneur est supprime puis recree.
-
-L'interface Metabase est accessible sur :
-
-```text
-http://localhost:3000
-```
-
-Les identifiants locaux sont disponibles dans `METABASE-CREDENTIALS.txt`.
-
-### 9. Configurer les dashboards et le cloisonnement
-
-Creer les deux comptes ClickHouse en lecture seule, puis provisionner Metabase :
+La procedure suivante cree le reseau Docker s'il n'existe pas, y connecte
+ClickHouse, cree les comptes SQL en lecture seule, demarre Metabase et
+provisionne les comptes, collections, questions, dashboards et permissions.
+Elle peut etre relancee sans recreer les objets deja presents.
 
 ```powershell
+docker network inspect bigdata-network *> $null
+if ($LASTEXITCODE -ne 0) { docker network create bigdata-network }
+docker network connect bigdata-network clickhouse-bigdata 2>$null
 Get-Content -Raw sql/metabase_access.sql | docker exec -i clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery
+docker compose -f docker-compose.metabase.yml up -d
 python scripts/setup_metabase.py
 python scripts/verify_metabase.py
 ```
+
+Le fichier `docker-compose.metabase.yml` fixe la version de Metabase, utilise
+la locale francaise, desactive la telemetrie anonyme et stocke sa base
+applicative dans le volume persistant `metabase-data`. Le script attend que
+l'API soit disponible avant de lancer le provisionnement.
 
 Le provisionnement cree :
 
@@ -198,7 +191,10 @@ Le provisionnement cree :
 Les cohortes et cellules de moins de 5 patients sont exclues par `gold.sql`.
 Le groupe Pilotage ne peut pas ouvrir la collection Recherche, et inversement.
 
-### 10. Recreer le conteneur Metabase
+L'interface est ensuite disponible sur `http://localhost:3000`. Les comptes de
+demonstration sont documentes dans `METABASE-CREDENTIALS.txt`.
+
+### 9. Recreer le conteneur Metabase
 
 ```console
 docker compose -f docker-compose.metabase.yml down
@@ -207,6 +203,16 @@ docker compose -f docker-compose.metabase.yml up -d
 
 Ne pas ajouter `-v` a `docker compose down`, car cette option supprimerait le
 volume persistant et toute la configuration Metabase.
+
+Pour repartir volontairement d'une instance vierge, supprimer le conteneur et
+le volume, puis reprendre l'etape 8 :
+
+```powershell
+docker compose -f docker-compose.metabase.yml down -v
+```
+
+Cette commande efface les comptes, permissions, questions et dashboards de
+l'instance locale.
 
 ## Execution quotidienne
 
@@ -227,13 +233,9 @@ taches Windows :
 powershell -ExecutionPolicy Bypass -File scripts/register_pipeline_task.ps1
 ```
 
-La documentation complete de la Partie 2, avec les choix d'architecture et les
-procedures de maintenance, est disponible dans
-[`docs/partie-2-automatisation.md`](docs/partie-2-automatisation.md).
-
-Le dossier de la Partie 1, avec le besoin, les sources, l'architecture, les
-traitements, les KPI, les visualisations et les recommandations, est disponible
-dans [`docs/partie-1-interface-analyse.md`](docs/partie-1-interface-analyse.md).
+Les parties 1 et 2 sont reunies dans [`docs/RAPPORT.md`](docs/RAPPORT.md). Une
+version directement consultable et imprimable est disponible dans
+[`RAPPORT.pdf`](RAPPORT.pdf).
 
 ## Verification
 

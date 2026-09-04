@@ -25,3 +25,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+source-evolution/
+
+FICHE-SUJET.pdf
+SUJET-EVOLUTION-nouvelles-kpi.pdf
