@@ -47,22 +47,37 @@ GROUP BY
 CREATE TABLE IF NOT EXISTS gold.activite_urgences_par_jour (
     activity_date Date,
     emergency_visits UInt64,
+    current_stays UInt64,
+    average_stay_hours Float64,
     calculated_at DateTime64(3) DEFAULT now64(3)
 )
 ENGINE = MergeTree
 ORDER BY activity_date;
 
+ALTER TABLE gold.activite_urgences_par_jour
+    ADD COLUMN IF NOT EXISTS current_stays UInt64 AFTER emergency_visits;
+
+ALTER TABLE gold.activite_urgences_par_jour
+    ADD COLUMN IF NOT EXISTS average_stay_hours Float64 AFTER current_stays;
+
 TRUNCATE TABLE gold.activite_urgences_par_jour;
 
 INSERT INTO gold.activite_urgences_par_jour (
     activity_date,
-    emergency_visits
+    emergency_visits,
+    current_stays,
+    average_stay_hours
 )
 SELECT
     toDate(admission_ts) AS activity_date,
-    count() AS emergency_visits
+    count() AS emergency_visits,
+    countIf(discharge_ts IS NULL) AS current_stays,
+    round(
+        avg(dateDiff('minute', admission_ts, discharge_ts) / 60.0),
+        1
+    ) AS average_stay_hours
 FROM silver.fact_sejour
-WHERE admission_mode = 'urgence'
+WHERE service_code = 'URGENCES'
 GROUP BY activity_date;
 
 -- Readmissions a 30 jours ---------------------------------------------------------
@@ -93,29 +108,20 @@ INSERT INTO gold.taux_readmission_30_jours (
     observation_days,
     is_provisional
 )
-WITH eligible_stays AS (
+WITH readmitted_stays AS (
     SELECT
-        stay_id,
-        patient_id,
-        discharge_ts
-    FROM silver.fact_sejour
-    WHERE discharge_ts IS NOT NULL
-      AND ifNull(discharge_mode, '') != 'deces'
-),
-readmission_candidates AS (
-    SELECT
-        initial_stay.stay_id,
-        initial_stay.discharge_ts,
-        minIf(
-            next_stay.admission_ts,
-            next_stay.admission_ts > assumeNotNull(initial_stay.discharge_ts)
-        ) AS next_admission_ts
-    FROM eligible_stays AS initial_stay
-    LEFT JOIN silver.fact_sejour AS next_stay
-        ON initial_stay.patient_id = next_stay.patient_id
-    GROUP BY
-        initial_stay.stay_id,
-        initial_stay.discharge_ts
+        current_stay.stay_id
+    FROM silver.fact_sejour AS current_stay
+    INNER JOIN silver.fact_sejour AS previous_stay
+        ON current_stay.patient_id = previous_stay.patient_id
+    WHERE current_stay.stay_id != previous_stay.stay_id
+      AND previous_stay.discharge_ts IS NOT NULL
+      AND current_stay.admission_ts > previous_stay.discharge_ts
+      AND current_stay.admission_ts <= addDays(
+          assumeNotNull(previous_stay.discharge_ts),
+          30
+      )
+    GROUP BY current_stay.stay_id
 ),
 observation_period AS (
     SELECT
@@ -125,11 +131,8 @@ observation_period AS (
 )
 SELECT
     'global' AS metric_scope,
-    count() AS eligible_discharges,
-    countIf(
-        next_admission_ts > assumeNotNull(discharge_ts)
-        AND next_admission_ts <= addDays(assumeNotNull(discharge_ts), 30)
-    ) AS observed_readmissions,
+    (SELECT count() FROM silver.fact_sejour) AS eligible_discharges,
+    (SELECT count() FROM readmitted_stays) AS observed_readmissions,
     round(
         100.0 * observed_readmissions / eligible_discharges,
         2
@@ -137,12 +140,8 @@ SELECT
     observation.start_date,
     observation.end_date,
     toUInt16(dateDiff('day', observation.start_date, observation.end_date) + 1),
-    toUInt8(1) AS is_provisional
-FROM readmission_candidates
-CROSS JOIN observation_period AS observation
-GROUP BY
-    observation.start_date,
-    observation.end_date;
+    toUInt8(0) AS is_provisional
+FROM observation_period AS observation;
 
 -- Alertes des constantes ---------------------------------------------------------
 
@@ -175,15 +174,14 @@ SELECT
     count() AS total_readings,
     countIf(
         heart_rate < 50
-        OR heart_rate > 120
+        OR heart_rate > 100
         OR spo2 < 92
-        OR temp_c < 36
         OR temp_c > 38.5
     ) AS alert_readings,
-    countIf(heart_rate < 50 OR heart_rate > 120) AS heart_rate_alerts,
+    countIf(heart_rate < 50 OR heart_rate > 100) AS heart_rate_alerts,
     countIf(spo2 < 92) AS spo2_alerts,
-    countIf(temp_c < 36 OR temp_c > 38.5) AS temperature_alerts,
-    round(100.0 * alert_readings / total_readings, 2) AS alert_rate_percent
+    countIf(temp_c > 38.5) AS temperature_alerts,
+    round(100.0 * alert_readings / total_readings, 1) AS alert_rate_percent
 FROM silver.fact_monitoring
 GROUP BY activity_date;
 
@@ -210,15 +208,13 @@ INSERT INTO gold.prevalence_par_pathologie (
 SELECT
     diagnostic.code_cim10,
     any(diagnostic.libelle) AS diagnostic_name,
-    uniqExact(sejour.patient_id) AS cohort_size,
+    uniqExact(diagnostic.patient_id) AS cohort_size,
     round(
         100.0 * cohort_size
-        / (SELECT uniqExact(patient_id) FROM silver.fact_sejour),
+        / (SELECT count() FROM silver.dim_patient),
         2
     ) AS prevalence_percent
 FROM silver.fact_diag AS diagnostic
-INNER JOIN silver.fact_sejour AS sejour
-    ON diagnostic.stay_id = sejour.stay_id
 GROUP BY diagnostic.code_cim10
 HAVING cohort_size >= 5;
 
@@ -250,18 +246,16 @@ WITH cohort_patients AS (
     SELECT
         diagnostic.code_cim10 AS code_cim10,
         any(diagnostic.libelle) AS diagnostic_name,
-        sejour.patient_id AS patient_id,
-        min(sejour.admission_ts) AS first_admission_ts,
+        diagnostic.patient_id AS patient_id,
         any(patient.birth_date) AS birth_date,
         any(patient.sex) AS sex
     FROM silver.fact_diag AS diagnostic
-    INNER JOIN silver.fact_sejour AS sejour
-        ON diagnostic.stay_id = sejour.stay_id
     INNER JOIN silver.dim_patient AS patient
-        ON sejour.patient_id = patient.patient_id
+        ON diagnostic.patient_id = patient.patient_id
+    WHERE diagnostic.diagnostic_type = 'principal'
     GROUP BY
         diagnostic.code_cim10,
-        sejour.patient_id
+        diagnostic.patient_id
 ),
 aged_patients AS (
     SELECT
@@ -269,30 +263,19 @@ aged_patients AS (
         diagnostic_name,
         patient_id,
         sex,
-        age(
-            'year',
-            birth_date,
-            toDate(first_admission_ts)
-        ) AS patient_age
+        (SELECT toYear(max(admission_ts)) FROM silver.fact_sejour)
+            - toYear(birth_date) AS patient_age
     FROM cohort_patients
 )
 SELECT
     code_cim10,
     diagnostic_name,
-    multiIf(
-        patient_age < 18, '0-17',
-        patient_age < 40, '18-39',
-        patient_age < 65, '40-64',
-        patient_age < 80, '65-79',
-        '80+'
+    concat(
+        toString(intDiv(patient_age, 10) * 10),
+        '-',
+        toString(intDiv(patient_age, 10) * 10 + 9)
     ) AS age_group,
-    multiIf(
-        patient_age < 18, 1,
-        patient_age < 40, 2,
-        patient_age < 65, 3,
-        patient_age < 80, 4,
-        5
-    ) AS age_group_order,
+    toUInt8(intDiv(patient_age, 10)) AS age_group_order,
     sex,
     count() AS patient_count
 FROM aged_patients

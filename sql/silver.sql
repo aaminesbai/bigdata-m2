@@ -4,7 +4,7 @@ CREATE DATABASE IF NOT EXISTS silver;
 
 CREATE TABLE IF NOT EXISTS silver.dim_patient (
     patient_id String,
-    birth_date Date,
+    birth_date Date32,
     sex LowCardinality(String),
     region_code LowCardinality(String)
 )
@@ -137,6 +137,7 @@ WHERE (discharge_ts IS NULL OR discharge_ts >= admission_ts)
 
 CREATE TABLE IF NOT EXISTS silver.fact_diag (
     stay_id String,
+    patient_id String,
     code_cim10 LowCardinality(String),
     libelle String,
     diagnostic_type Enum8('principal' = 1, 'associe' = 2),
@@ -147,6 +148,7 @@ ORDER BY (stay_id, code_cim10, diagnostic_type);
 
 INSERT INTO silver.fact_diag (
     stay_id,
+    patient_id,
     code_cim10,
     libelle,
     diagnostic_type,
@@ -154,6 +156,7 @@ INSERT INTO silver.fact_diag (
 )
 SELECT
     diagnostic.stay_id,
+    sejour.patient_id,
     diagnostic.code_cim10,
     cim10.libelle,
     diagnostic.diagnostic_type,
@@ -167,13 +170,17 @@ FROM (
     FROM bronze.diagnostic
     GROUP BY stay_id, code_cim10, diagnostic_type
 ) AS diagnostic
+INNER JOIN (
+    SELECT
+        stay_id,
+        argMax(patient_id, (source_date, ingested_at)) AS patient_id
+    FROM bronze.sejour
+    GROUP BY stay_id
+) AS sejour
+    ON diagnostic.stay_id = sejour.stay_id
 INNER JOIN silver.dim_cim10 AS cim10
     ON diagnostic.code_cim10 = cim10.code_cim10
-WHERE diagnostic.stay_id IN (
-    SELECT stay_id
-    FROM silver.fact_sejour
-)
-  AND (diagnostic.stay_id, diagnostic.code_cim10, diagnostic.diagnostic_type)
+WHERE (diagnostic.stay_id, diagnostic.code_cim10, diagnostic.diagnostic_type)
       NOT IN (
           SELECT stay_id, code_cim10, diagnostic_type
           FROM silver.fact_diag
@@ -211,10 +218,6 @@ FROM bronze.monitoring
 WHERE heart_rate BETWEEN 20 AND 250
   AND spo2 BETWEEN 50 AND 100
   AND temp_c BETWEEN 30 AND 45
-  AND stay_id IN (
-      SELECT stay_id
-      FROM silver.fact_sejour
-  )
   AND (stay_id, ts) NOT IN (
       SELECT stay_id, ts
       FROM silver.fact_monitoring

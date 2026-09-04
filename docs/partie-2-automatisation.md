@@ -48,7 +48,9 @@ Si la copie echoue :
 - l'execution suivante peut reprendre normalement.
 
 Pour `patients.csv`, les colonnes `nir`, `nom` et `prenom` sont retirees avant
-la publication de la partition dans le Lake.
+la publication de la partition dans le Lake. Le `patient_id` est remplacé par
+un HMAC-SHA-256 déterministe dans les fichiers patients et séjours. Le même IPP
+produit donc le même pseudonyme et les jointures restent possibles.
 
 ### Transformations
 
@@ -313,6 +315,21 @@ reconstruire les couches dependantes. Cette operation ne doit pas etre
 automatisee car elle modifie un historique deja publie.
 
 ## Maintenance
+
+### Clé de pseudonymisation
+
+La clé HMAC est directement déclarée dans `scripts/copy_to_lake.py` uniquement
+pour simplifier l'exercice. Cette pratique ne doit pas être reproduite en
+production : la clé doit être injectée depuis une variable d'environnement ou
+un gestionnaire de secrets, avec des droits d'accès et une rotation contrôlés.
+
+Une modification de la clé change tous les pseudonymes. Il faut alors suspendre
+le pipeline et reconstruire ensemble le Lake, Bronze, Silver et Gold afin de ne
+pas mélanger des identifiants produits avec des clés différentes :
+
+```console
+python scripts/copy_to_lake.py --rebuild
+```
 
 Controle hebdomadaire :
 

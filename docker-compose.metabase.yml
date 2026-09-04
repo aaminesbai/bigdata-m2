@@ -1,0 +1,24 @@
+services:
+  metabase:
+    image: metabase/metabase:v0.63.16.3
+    container_name: metabase
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_FILE: /metabase.db/metabase.db
+      MB_SITE_LOCALE: fr
+      MB_ANON_TRACKING_ENABLED: "false"
+    volumes:
+      - metabase-data:/metabase.db
+    networks:
+      - bigdata-network
+
+volumes:
+  metabase-data:
+    name: metabase-data
+
+networks:
+  bigdata-network:
+    external: true
+    name: bigdata-network

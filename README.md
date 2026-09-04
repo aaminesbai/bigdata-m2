@@ -26,6 +26,7 @@ scripts/
 `-- register_pipeline_task.ps1
 
 docs/
+|-- partie-1-interface-analyse.md
 `-- partie-2-automatisation.md
 
 tests/
@@ -33,8 +34,11 @@ tests/
 ```
 
 Lors de la copie, les colonnes `nom`, `prenom` et `nir` sont supprimees des
-fichiers `patients.csv` presents dans le Lake. Les fichiers sources ne sont pas
-modifies.
+fichiers `patients.csv`. Le `patient_id` est remplace par le meme HMAC-SHA-256
+dans les fichiers patients et sejours afin de conserver les jointures sans
+propager l'IPP source. La cle est directement dans le code uniquement pour cet
+exercice ; en production, elle doit provenir d'un gestionnaire de secrets ou
+d'une variable d'environnement. Les fichiers sources ne sont pas modifies.
 
 ## Prerequis
 
@@ -77,6 +81,12 @@ python -m pip install -r requirements.txt
 
 ```console
 python scripts/copy_to_lake.py
+```
+
+Apres une modification de la cle HMAC, reconstruire tout le Lake :
+
+```console
+python scripts/copy_to_lake.py --rebuild
 ```
 
 Le script reproduit les partitions quotidiennes :
@@ -145,6 +155,59 @@ Utilisateur : admin
 Mot de passe : clickhouse
 ```
 
+### 8. Demarrer Metabase
+
+```console
+docker network create bigdata-network
+docker network connect bigdata-network clickhouse-bigdata
+docker compose -f docker-compose.metabase.yml up -d
+```
+
+Si le reseau existe deja, l'erreur de la premiere commande peut etre ignoree.
+Le volume nomme `metabase-data` conserve les comptes, droits, questions et
+dashboards lorsque le conteneur est supprime puis recree.
+
+L'interface Metabase est accessible sur :
+
+```text
+http://localhost:3000
+```
+
+Les identifiants locaux sont disponibles dans `METABASE-CREDENTIALS.txt`.
+
+### 9. Configurer les dashboards et le cloisonnement
+
+Creer les deux comptes ClickHouse en lecture seule, puis provisionner Metabase :
+
+```powershell
+Get-Content -Raw sql/metabase_access.sql | docker exec -i clickhouse-bigdata clickhouse-client --user admin --password clickhouse --multiquery
+python scripts/setup_metabase.py
+python scripts/verify_metabase.py
+```
+
+Le provisionnement cree :
+
+- le dashboard `Pilotage hospitalier` avec la DMS, les urgences, les
+  readmissions et les alertes de constantes ;
+- le dashboard `Recherche clinique` avec la prevalence et la description des
+  cohortes par age et sexe ;
+- les groupes, collections et comptes de demonstration separes ;
+- deux connexions ClickHouse dont les comptes techniques ne peuvent lire que
+  les tables Gold correspondant a leur usage.
+
+Les cohortes et cellules de moins de 5 patients sont exclues par `gold.sql`.
+Le groupe Pilotage ne peut pas ouvrir la collection Recherche, et inversement.
+
+### 10. Recreer le conteneur Metabase
+
+```console
+docker compose -f docker-compose.metabase.yml down
+docker compose -f docker-compose.metabase.yml up -d
+```
+
+Ne pas ajouter `-v` a `docker compose down`, car cette option supprimerait le
+volume persistant et toute la configuration Metabase.
+
 ## Execution quotidienne
 
 Apres le depot d'une nouvelle date dans `source-filestorage/` :
@@ -167,6 +230,10 @@ powershell -ExecutionPolicy Bypass -File scripts/register_pipeline_task.ps1
 La documentation complete de la Partie 2, avec les choix d'architecture et les
 procedures de maintenance, est disponible dans
 [`docs/partie-2-automatisation.md`](docs/partie-2-automatisation.md).
+
+Le dossier de la Partie 1, avec le besoin, les sources, l'architecture, les
+traitements, les KPI, les visualisations et les recommandations, est disponible
+dans [`docs/partie-1-interface-analyse.md`](docs/partie-1-interface-analyse.md).
 
 ## Verification
 

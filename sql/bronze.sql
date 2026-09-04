@@ -4,7 +4,7 @@ CREATE DATABASE IF NOT EXISTS bronze;
 
 CREATE TABLE IF NOT EXISTS bronze.patient (
     patient_id String,
-    birth_date Date,
+    birth_date Date32,
     sex LowCardinality(String),
     region_code LowCardinality(String),
     source_date Date,
@@ -33,7 +33,7 @@ SELECT
 FROM file(
     'patients/*/patients.csv',
     'CSVWithNames',
-    'patient_id String, birth_date Date, sex String, region_code String'
+    'patient_id String, birth_date Date32, sex String, region_code String'
 )
 WHERE _path NOT IN (
     SELECT DISTINCT source_file
