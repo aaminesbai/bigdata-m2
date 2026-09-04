@@ -73,19 +73,9 @@ pour le référentiel des services et `code_cim10` pour le référentiel médica
 L'architecture suit le modèle médaillon recommandé pour séparer la collecte, la
 structuration, la qualité et la restitution.
 
-``` mermaid
-flowchart LR
-    S[Filestorage CHU<br/>lecture seule] --> L[Lake local<br/>fichiers par date]
-    L --> B[Bronze ClickHouse<br/>données typées et tracées]
-    B --> V[Silver ClickHouse<br/>nettoyage et déduplication]
-    V --> G[Gold ClickHouse<br/>KPI agrégés]
-    G --> M[Metabase<br/>Pilotage et Recherche]
+![Architecture du pipeline EDS CHU](architecture.png)
 
-    P[Python<br/>orchestration] -. pilote .-> L
-    P -. exécute le SQL .-> B
-    P -. exécute le SQL .-> V
-    P -. exécute le SQL .-> G
-```
+*Architecture médaillon du filestorage jusqu'aux dashboards Metabase.*
 
 #### 3.1 Choix techniques
 
